@@ -1,3 +1,5 @@
+#include <Arduino.h>
+
 int relay = 2; 
 
 void setup() {
