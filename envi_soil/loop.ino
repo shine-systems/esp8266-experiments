@@ -1,6 +1,3 @@
-int SOIL_MOISTURE = A0;
-float soil_moisture_value = 0.0;
-
 void loop() {
   /* Get a new normalized sensor event */
   sensors_event_t humidity;

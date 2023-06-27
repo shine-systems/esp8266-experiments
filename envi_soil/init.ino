@@ -1,4 +1,17 @@
-void setup(void) {
+#include <time.h>
+#include <ESP8266WiFi.h>
+#include <Adafruit_AHTX0.h>
+
+X509List x509(serverCACert);
+WiFiClientSecure client;
+
+Adafruit_AHTX0 aht;
+Adafruit_Sensor *aht_humidity, *aht_temp;
+
+int SOIL_MOISTURE = A0;
+float soil_moisture_value = 0.0;
+
+void setup() {
   Serial.begin(9600); // declare board rate (freq. of comms)
   Serial.setDebugOutput(true);
   Serial.println();
@@ -22,11 +35,11 @@ void setup(void) {
   Serial.print("Setting time using SNTP");
   configTime(8 * 3600, 0, "pool.ntp.org", "time.nist.gov");
   time_t now = time(nullptr);
-  // while (now < 8 * 3600 * 2) {
-  //   delay(500);
-  //   Serial.print(".");
-  //   now = time(nullptr);
-  // }
+  while (now < 8 * 3600 * 2) {
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+  }
   Serial.println("");
   struct tm timeinfo;
   gmtime_r(&now, &timeinfo);
@@ -34,8 +47,6 @@ void setup(void) {
   Serial.print(asctime(&timeinfo));
 
   client.setTrustAnchors(&x509);
-
-  
 
   // ADAFRUIT ENV SENSOR SETUP
   if (!aht.begin()) {
