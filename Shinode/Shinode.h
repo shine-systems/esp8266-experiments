@@ -8,7 +8,6 @@
 #define Shinode_h
 
 #include <vector>
-#include <tuple>
 #include <time.h>
 #include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
