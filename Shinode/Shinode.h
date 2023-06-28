@@ -38,8 +38,12 @@ struct Controller {
 
 class Shinode {
 private:
-  String device_id;
-  String token;
+  const char* device_id;
+  const char* token;
+  const char* APSSID;
+  const char* APPSK;
+  const char* host;
+  const char* rootCACert;
   unsigned long last_poll;
   unsigned int polling_interval;
   WiFiClientSecure client;
@@ -48,22 +52,27 @@ private:
 
 public:
   Shinode(
-    String device_id,
-    String token,
-    String APSSID,
-    String APPSK,
-    String host,
-    String rootCACert,
+    const char* device_id,
+    const char* token,
+    const char* APSSID,
+    const char* APPSK,
+    const char* host,
+    const char* rootCACert,
     vector<Sensor> sensors,
     vector<Controller> controllers
   ) : client(),
       device_id(device_id),
       token(token),
+      APSSID(APSSID),
+      APPSK(APPSK),
+      host(host),
+      rootCACert(rootCACert),
       last_poll(millis()),
       polling_interval(0),
       sensors(sensors),
-      controllers(controllers) {
+      controllers(controllers) {}
 
+  void connect() {
     // WIFI SETUP
     Serial.print("connecting to ");
     Serial.println(APSSID);
@@ -94,21 +103,23 @@ public:
     Serial.print("Current time: ");
     Serial.print(asctime(&timeinfo));
       
-    X509List x509(rootCACert.c_str());
-    client.setTrustAnchors(&x509);
-    
+    X509List cert(rootCACert);
+    client.setTrustAnchors(&cert);
+
+    Serial.println("Connecting to host: " + String(host));
     HTTPClient http;
-    http.begin(client, host);
-    http.addHeader("Authorization", "Bearer " + token);
+    http.begin(client, host, 443, "/" + String(device_id) + "/connect", true);
+    http.addHeader("Authorization", "Bearer " + String(token));
 
     int httpCode = http.GET();
     if (httpCode == HTTP_CODE_OK) {
+      Serial.println("Connection success.");
       String payload = http.getString();
 
       StaticJsonDocument<200> doc;
       deserializeJson(doc, payload);
 
-      this->polling_interval = doc["polling_interval"];
+      polling_interval = doc["polling_interval"];
 
       // Check if received sensor data matches Shinode config
       JsonArray receivedSensors = doc["sensors"];
@@ -123,11 +134,9 @@ public:
         JsonObject receivedControl = receivedControls[i];
         findControllerByName(receivedControl["name"]);
       }
-
-      sense();
     } else {
       Serial.println();
-      Serial.print("Bad response from server in Shinode constructor: " + device_id);
+      Serial.print("Bad response (" + String(httpCode) + ") in connect for Shinode id: " + device_id);
     }
 
     http.end();
@@ -149,8 +158,8 @@ public:
     }
 
     HTTPClient http;
-    http.begin(client, "https://esp8266-tls.thesebsite.com/" + device_id + "/sense");
-    http.addHeader("Authorization", "Bearer " + token);
+    http.begin(client, host, 443, "/" + String(device_id) + "/sense", true);
+    http.addHeader("Authorization", "Bearer " + String(token));
     http.addHeader("Content-Type", "application/json");
 
     int httpCode = http.POST(buildJsonPayload(results));
@@ -171,12 +180,9 @@ public:
         Result action = { name, unit, value };
         actions[i] = action;
       }
-
-      http.end();
-      return actions;
     } else {
       Serial.println();
-      Serial.print("Bad response from server in Shinode sense: " + device_id);
+      Serial.print("Bad response (" + String(httpCode) + ") in sense for Shinode id: " + String(device_id));
     }
 
     http.end();
@@ -199,14 +205,14 @@ public:
     }
 
     HTTPClient http;
-    http.begin(client, "https://esp8266-tls.thesebsite.com/" + device_id + "/control");
-    http.addHeader("Authorization", "Bearer " + token);
+    http.begin(client, host, 443, "/" + String(device_id) + "/control", true);
+    http.addHeader("Authorization", "Bearer " + String(token));
     http.addHeader("Content-Type", "application/json");
 
     int httpCode = http.POST(buildJsonPayload(results));
     if (httpCode != HTTP_CODE_OK) {
       Serial.println();
-      Serial.print("Bad response from server in Shinode control: " + device_id);
+      Serial.print("Bad response (" + String(httpCode) + ") in control for Shinode id: " + String(device_id));
     }
 
     http.end();

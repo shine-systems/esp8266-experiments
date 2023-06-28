@@ -1,6 +1,4 @@
 #include <vector>
-#include <time.h>
-#include <ESP8266WiFi.h>
 #include <Adafruit_AHTX0.h>
 #include <Shinode.h>
 
@@ -17,7 +15,7 @@ String moistureSensorSense() {
   float value = analogRead(SOIL_MOISTURE);
   int max = 700;
   int min = 200;
-  float calibrated = (value - min) / (max - min);
+  float calibrated = ((value - min) / (max - min)) * 100;
   return String(calibrated);
 }
 
@@ -61,19 +59,25 @@ Sensor climate_sensor {
 };
 
 Shinode device(
-  String("123"),
-  String("super_secret_token"),
-  String(APSSID),
-  String(APPSK),
-  String(host),
-  String(rootCACert),
+  "123",
+  "super_secret_token",
+  APSSID,
+  APPSK,
+  host,
+  rootCACert,
   std::vector<Sensor>{ moisture_sensor, climate_sensor },
   std::vector<Controller>{}
 );
 
 void setup() {
-  Serial.begin(9600); // declare board rate (freq. of comms)
-
+  Serial.begin(9600);
   Serial.setDebugOutput(true);
   Serial.println();
+  
+  device.connect();
+}
+
+void loop() {
+  device.sync();
+  delay(5000);
 }
