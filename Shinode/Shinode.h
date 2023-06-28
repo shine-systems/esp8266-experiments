@@ -1,7 +1,12 @@
+/*
+  Shinode class for use on Arduino-based microcontrollers (such as ESP8266)
+  to connect to the Shineponics cloud for smart farming.
+  Created by Seb Ringrose (github.com/sejori), 28 Jun 2023.
+  See repository license for licensing information.
+*/
 #ifndef Shinode_h
 #define Shinode_h
 
-#include <string>
 #include <vector>
 #include <tuple>
 #include <time.h>
@@ -9,34 +14,32 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 
-using std::string;
 using std::vector;
-using std::tuple;
 
 struct Result {
-  string name;
-  string unit;
-  string value;
+  String name;
+  String unit;
+  String value;
 };
 
 struct Sensor {
-  string name;
-  string unit;
+  String name;
+  String unit;
   void (*setup)();
-  Result (*sense)();
+  String (*sense)();
 };
 
 struct Controller {
-  string name;
-  string unit;
+  String name;
+  String unit;
   void (*setup)();
-  Result (*control)(Result);
+  String (*control)(Result);
 };
 
 class Shinode {
 private:
-  string device_id;
-  string token;
+  String device_id;
+  String token;
   unsigned long last_poll;
   unsigned int polling_interval;
   WiFiClientSecure client;
@@ -45,12 +48,12 @@ private:
 
 public:
   Shinode(
-    string device_id,
-    string token,
-    string APSSID,
-    string APPSK,
-    string host,
-    string rootCACert,
+    String device_id,
+    String token,
+    String APSSID,
+    String APPSK,
+    String host,
+    String rootCACert,
     vector<Sensor> sensors,
     vector<Controller> controllers
   ) : client(),
@@ -60,8 +63,38 @@ public:
       polling_interval(0),
       sensors(sensors),
       controllers(controllers) {
+
+    // WIFI SETUP
+    Serial.print("connecting to ");
+    Serial.println(APSSID);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(APSSID, APPSK);
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+    }
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+
+    // Synchronize time useing SNTP. This is necessary to verify that
+    // the TLS certificates offered by the server are currently valid.
+    Serial.print("Setting time using SNTP");
+    configTime(8 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+    time_t now = time(nullptr);
+    while (now < 8 * 3600 * 2) {
+      delay(500);
+      Serial.print(".");
+      now = time(nullptr);
+    }
+    Serial.println("");
+    struct tm timeinfo;
+    gmtime_r(&now, &timeinfo);
+    Serial.print("Current time: ");
+    Serial.print(asctime(&timeinfo));
       
-    X509List x509(rootCACert);
+    X509List x509(rootCACert.c_str());
     client.setTrustAnchors(&x509);
     
     HTTPClient http;
@@ -70,7 +103,7 @@ public:
 
     int httpCode = http.GET();
     if (httpCode == HTTP_CODE_OK) {
-      string payload = http.getString();
+      String payload = http.getString();
 
       StaticJsonDocument<200> doc;
       deserializeJson(doc, payload);
@@ -80,66 +113,74 @@ public:
       // Check if received sensor data matches Shinode config
       JsonArray receivedSensors = doc["sensors"];
       for (size_t i = 0; i < receivedSensors.size(); i++) {
-        JsonObject receivedSensor = receivedSensors[i].as<JsonObject>();
-        findSensorByName(receivedSensor["name"].as<string>());
+        JsonObject receivedSensor = receivedSensors[i];
+        findSensorByName(receivedSensor["name"]);
       }
 
       // Check if received control data matches Shinode config
       JsonArray receivedControls = doc["controls"];
       for (size_t i = 0; i < receivedControls.size(); i++) {
-        JsonObject receivedControl = receivedControls[i].as<JsonObject>();
-        findControllerByName(receivedControl["name"].as<string>());
+        JsonObject receivedControl = receivedControls[i];
+        findControllerByName(receivedControl["name"]);
       }
 
       sense();
+    } else {
+      Serial.println();
+      Serial.print("Bad response from server in Shinode constructor: " + device_id);
     }
 
     http.end();
   }
 
-  tuple<Result*, size_t> sense() {
+  vector<Result> sense() {
     size_t sensorCount = sensors.size();
     vector<Result> results(sensorCount);
 
     for (size_t i = 0; i < sensorCount; i++) {
       Sensor& sensor = sensors[i];
-      Result result = sensor.sense();
+      Result result = {
+        sensor.name,
+        sensor.unit,
+        sensor.sense()
+      };
 
       results[i] = result;
     }
 
     HTTPClient http;
-    http.begin(client, "https://esp8266-tls.thewebsite.com/" + device_id + "/sense");
+    http.begin(client, "https://esp8266-tls.thesebsite.com/" + device_id + "/sense");
     http.addHeader("Authorization", "Bearer " + token);
     http.addHeader("Content-Type", "application/json");
 
-    int httpCode = http.POST(buildJsonPayload(results, sensorCount));
+    int httpCode = http.POST(buildJsonPayload(results));
+    vector<Result> actions;
 
     if (httpCode == HTTP_CODE_OK) {
-      string payload = http.getString();
-
+      String payload = http.getString();
       StaticJsonDocument<200> doc;
       deserializeJson(doc, payload);
-
       size_t controlCount = doc.size();
-      Result* actions = new Result[controlCount];
 
       for (size_t i = 0; i < controlCount; i++) {
-        JsonObject control = doc[i].as<JsonObject>();
-        string name = control["name"].as<string>();
-        string unit = control["unit"].as<string>();
-        string value = control["value"].as<string>();
+        JsonObject control = doc[i];
+        String name = control["name"];
+        String unit = control["unit"];
+        String value = control["value"];
 
         Result action = { name, unit, value };
         actions[i] = action;
       }
 
       http.end();
-      return std::make_tuple(actions, controlCount);
+      return actions;
+    } else {
+      Serial.println();
+      Serial.print("Bad response from server in Shinode sense: " + device_id);
     }
 
     http.end();
-    return std::make_tuple(nullptr, 0);
+    return actions;
   }
 
   void control(vector<Result>& actions) {
@@ -149,19 +190,26 @@ public:
     for (size_t i = 0; i < actionCount; i++) {
       Result& action = actions[i];
       Controller controller = findControllerByName(action.name);
-      Result result = controller.control(action);
+      Result result = {
+        controller.name,
+        controller.unit,
+        controller.control(action)
+      };
       results[i] = result;
     }
 
     HTTPClient http;
-    http.begin(client, "https://esp8266-tls.thewebsite.com/" + device_id + "/control");
+    http.begin(client, "https://esp8266-tls.thesebsite.com/" + device_id + "/control");
     http.addHeader("Authorization", "Bearer " + token);
     http.addHeader("Content-Type", "application/json");
 
-    int httpCode = http.POST(buildJsonPayload(results, actionCount));
+    int httpCode = http.POST(buildJsonPayload(results));
+    if (httpCode != HTTP_CODE_OK) {
+      Serial.println();
+      Serial.print("Bad response from server in Shinode control: " + device_id);
+    }
 
     http.end();
-    delete[] results;
   }
 
   void sync() {
@@ -172,7 +220,7 @@ public:
   }
 
 private:
-  Sensor findSensorByName(string name) {
+  Sensor findSensorByName(String name) {
     for (size_t i = 0; i < sensors.size(); i++) {
       Sensor& sensor = sensors[i];
 
@@ -181,10 +229,11 @@ private:
       }
     }
 
-    throw std::runtime_error("Sensor not found: " + name);
+    Serial.println();
+    Serial.print("Sensor config not found: " + name);
   }
 
-  Controller findControllerByName(string name) {
+  Controller findControllerByName(String name) {
     for (size_t i = 0; i < controllers.size(); i++) {
       Controller& controller = controllers[i];
 
@@ -193,23 +242,26 @@ private:
       }
     }
 
-    throw std::runtime_error("Controller not found: " + name);
+    Serial.println();
+    Serial.print("Controller config not found: " + name);
   }
 
-  string buildJsonPayload(Result* results, size_t resultCount) {
-    DynamicJsonDocument doc(200);
-    JsonArray jsonArray = doc.to<JsonArray>();
+  String buildJsonPayload(vector<Result> results) {
+    size_t capacity = JSON_ARRAY_SIZE(results.size()) + results.size() * JSON_OBJECT_SIZE(3);
+    DynamicJsonDocument doc(capacity);
+    JsonObject obj = doc.to<JsonObject>();
 
-    for (size_t i = 0; i < resultCount; i++) {
+    for (size_t i = 0; i < results.size(); i++) {
       Result result = results[i];
-      JsonObject jsonResult = jsonArray.createNestedObject();
-
-      jsonResult["name"] = result.name;
-      jsonResult["unit"] = result.unit;
-      jsonResult["value"] = result.value;
+      obj["name"] = result.name;
+      obj["unit"] = result.unit;
+      obj["value"] = result.value;
     }
 
-    return doc.as<String>();
+    String json;
+    serializeJson(doc, json);
+
+    return json;
   }
 };
 

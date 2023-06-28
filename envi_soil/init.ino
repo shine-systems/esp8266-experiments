@@ -1,54 +1,34 @@
+#include <vector>
 #include <time.h>
 #include <ESP8266WiFi.h>
 #include <Adafruit_AHTX0.h>
-
-X509List x509(serverCACert);
-WiFiClientSecure client;
+#include <Shinode.h>
 
 Adafruit_AHTX0 aht;
 Adafruit_Sensor *aht_humidity, *aht_temp;
-
 int SOIL_MOISTURE = A0;
 float soil_moisture_value = 0.0;
 
-void setup() {
-  Serial.begin(9600); // declare board rate (freq. of comms)
-  Serial.setDebugOutput(true);
-  Serial.println();
+void moistureSensorSetup() {
+  pinMode(SOIL_MOISTURE, OUTPUT);
+}
 
-  // WIFI SETUP
-  Serial.print("connecting to ");
-  Serial.println(APSSID);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(APSSID, APPSK);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+String moistureSensorSense() {
+  float value = analogRead(SOIL_MOISTURE);
+  int max = 700;
+  int min = 200;
+  float calibrated = (value - min) / (max - min);
+  return String(calibrated);
+}
 
-  // Synchronize time useing SNTP. This is necessary to verify that
-  // the TLS certificates offered by the server are currently valid.
-  Serial.print("Setting time using SNTP");
-  configTime(8 * 3600, 0, "pool.ntp.org", "time.nist.gov");
-  time_t now = time(nullptr);
-  while (now < 8 * 3600 * 2) {
-    delay(500);
-    Serial.print(".");
-    now = time(nullptr);
-  }
-  Serial.println("");
-  struct tm timeinfo;
-  gmtime_r(&now, &timeinfo);
-  Serial.print("Current time: ");
-  Serial.print(asctime(&timeinfo));
+Sensor moisture_sensor = {
+  String("soil_moisture"),
+  String("%"),
+  moistureSensorSetup,
+  moistureSensorSense
+};
 
-  client.setTrustAnchors(&x509);
-
-  // ADAFRUIT ENV SENSOR SETUP
+void climateSensorSetup() {
   if (!aht.begin()) {
     Serial.println("Failed to find AHT10/AHT20 chip");
     while (1) {
@@ -62,7 +42,38 @@ void setup() {
 
   aht_humidity = aht.getHumiditySensor();
   aht_humidity->printSensorDetails();
+}
 
-  // ANALOG SOIL MOISTURE SETUP 
-  pinMode(SOIL_MOISTURE, OUTPUT);
+String climateSensorSense() {
+  sensors_event_t humidity;
+  sensors_event_t temp;
+  aht_humidity->getEvent(&humidity);
+  aht_temp->getEvent(&temp);
+
+  return String("Humidity: " + String(humidity.relative_humidity) + "% rH" + " Temperature: " + String(temp.temperature) + " degrees C");
+}
+
+Sensor climate_sensor {
+  String("climate"),
+  String("humidity and temperature"),
+  climateSensorSetup,
+  climateSensorSense
+};
+
+Shinode device(
+  String("123"),
+  String("super_secret_token"),
+  String(APSSID),
+  String(APPSK),
+  String(host),
+  String(rootCACert),
+  std::vector<Sensor>{ moisture_sensor, climate_sensor },
+  std::vector<Controller>{}
+);
+
+void setup() {
+  Serial.begin(9600); // declare board rate (freq. of comms)
+
+  Serial.setDebugOutput(true);
+  Serial.println();
 }
