@@ -149,7 +149,7 @@ public:
     }
 
     HTTPClient http;
-    http.begin(client, "https://esp8266-tls.thesebsite.com/" + device_id + "/sense");
+    http.begin(client, String(host + "/" + String(device_id) + "/sense"));
     http.addHeader("Authorization", "Bearer " + token);
     http.addHeader("Content-Type", "application/json");
 
@@ -199,7 +199,7 @@ public:
     }
 
     HTTPClient http;
-    http.begin(client, "https://esp8266-tls.thesebsite.com/" + device_id + "/control");
+    http.begin(client, String(host + "/" +  String(device_id) + "/control"));
     http.addHeader("Authorization", "Bearer " + token);
     http.addHeader("Content-Type", "application/json");
 
