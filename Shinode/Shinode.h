@@ -47,6 +47,7 @@ private:
   unsigned long last_poll;
   unsigned int polling_interval;
   WiFiClientSecure client;
+  HTTPClient http;
   vector<Sensor> sensors;
   vector<Controller> controllers;
 
@@ -107,7 +108,6 @@ public:
     client.setTrustAnchors(&cert);
 
     Serial.println("Connecting to host: " + String(host));
-    HTTPClient http;
     http.begin(client, host, 443, "/" + String(device_id) + "/connect", true);
     http.addHeader("Authorization", "Bearer " + String(token));
 
@@ -174,18 +174,17 @@ public:
       results[i] = result;
     }
 
-    HTTPClient http;
     http.begin(client, host, 443, "/" + String(device_id) + "/sense", true);
     http.addHeader("Authorization", "Bearer " + String(token));
     http.addHeader("Content-Type", "application/json");
-
-    Serial.println("Connected in sense...");
 
     // POST sense data and set responded actions
     int httpCode = http.POST(buildJsonPayload(results));
     Serial.println(httpCode);
     if (httpCode == HTTP_CODE_OK) {
       String payload = http.getString();
+      Serial.println("Actions from server:");
+      Serial.println(payload);
       DynamicJsonDocument doc(1024);
       deserializeJson(doc, payload);
       size_t controlCount = doc.size();
@@ -209,7 +208,13 @@ public:
   }
 
   void control(vector<Result> actions) {
+    Serial.println("control called");
     size_t actionCount = actions.size();
+    if (actions[0].name == "null") {
+      Serial.println("No actions given to control.");
+      return;
+    }
+
     vector<Result> results(actionCount);
 
     for (size_t i = 0; i < actionCount; i++) {
@@ -225,7 +230,6 @@ public:
       }
     }
 
-    HTTPClient http;
     http.begin(client, host, 443, "/" + String(device_id) + "/control", true);
     http.addHeader("Authorization", "Bearer " + String(token));
     http.addHeader("Content-Type", "application/json");
@@ -277,8 +281,8 @@ private:
   }
 
   String buildJsonPayload(vector<Result> results) {
-    //size_t capacity = JSON_ARRAY_SIZE(results.size()) + results.size() * JSON_OBJECT_SIZE(3);
-    DynamicJsonDocument doc(1024);
+    size_t capacity = JSON_ARRAY_SIZE(results.size()) + results.size() * JSON_OBJECT_SIZE(3);
+    DynamicJsonDocument doc(capacity);
     Serial.println(results.size());
 
     for (size_t i = 0; i < results.size(); i++) {
