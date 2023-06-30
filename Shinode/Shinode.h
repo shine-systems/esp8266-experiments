@@ -8,6 +8,7 @@
 #define Shinode_h
 
 #include <vector>
+#include <functional>
 #include <time.h>
 #include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
@@ -24,15 +25,15 @@ struct Result {
 struct Sensor {
   String name;
   String unit;
-  void (*setup)();
-  String (*sense)();
+  std::function<void()> setup;
+  std::function<String()> sense;
 };
 
 struct Controller {
   String name;
   String unit;
-  void (*setup)();
-  String (*control)(Result);
+  std::function<void()> setup;
+  std::function<String(Result)> control;
 };
 
 class Shinode {
@@ -82,7 +83,7 @@ public:
       Serial.print(".");
     }
     Serial.println("");
-    Serial.println("WiFi connected");
+    Serial.print("WiFi connected");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
 
@@ -114,43 +115,60 @@ public:
     if (httpCode == HTTP_CODE_OK) {
       Serial.println("Connection success.");
       String payload = http.getString();
-
-      StaticJsonDocument<200> doc;
+      DynamicJsonDocument doc(1024);
       deserializeJson(doc, payload);
 
       polling_interval = doc["polling_interval"];
 
-      // Check if received sensor data matches Shinode config
-      JsonArray receivedSensors = doc["sensors"];
-      for (size_t i = 0; i < receivedSensors.size(); i++) {
-        JsonObject receivedSensor = receivedSensors[i];
-        findSensorByName(receivedSensor["name"]);
+      // setup sensors
+      size_t sensorCount = sensors.size();
+      for (size_t i = 0; i < sensorCount; i++) {
+        Sensor sensor = sensors[i];
+        Serial.println("Setting up " + sensor.name);
+        sensor.setup();
       }
 
-      // Check if received control data matches Shinode config
-      JsonArray receivedControls = doc["controls"];
-      for (size_t i = 0; i < receivedControls.size(); i++) {
-        JsonObject receivedControl = receivedControls[i];
-        findControllerByName(receivedControl["name"]);
+      // Check if received sensor data matches Shinode config
+      JsonArray receivedSensors = doc["sensors"];
+      if (receivedSensors) {
+        for (size_t i = 0; i < receivedSensors.size(); i++) {
+          JsonObject receivedSensor = receivedSensors[i];
+          Serial.println(receivedSensor);
+          findSensorByName(receivedSensor["name"]);
+        }
+
+        // Check if received control data matches Shinode config
+        JsonArray receivedControls = doc["controls"];
+        for (size_t i = 0; i < receivedControls.size(); i++) {
+          JsonObject receivedControl = receivedControls[i];
+          findControllerByName(receivedControl["name"]);
+        }
+      } else {
+        Serial.println("No sensor data received for Shinode id: " + String(device_id));
       }
     } else {
-      Serial.println();
-      Serial.print("Bad response (" + String(httpCode) + ") in connect for Shinode id: " + device_id);
+      Serial.println("Bad response (" + String(httpCode) + ") in connect for Shinode id: " + device_id);
     }
 
     http.end();
   }
 
   vector<Result> sense() {
+    Serial.println("sense called");
     size_t sensorCount = sensors.size();
     vector<Result> results(sensorCount);
+    vector<Result> actions(0);
+    Serial.println("Number of sensors registered locally: " + String(sensorCount));
 
     for (size_t i = 0; i < sensorCount; i++) {
-      Sensor& sensor = sensors[i];
+      Sensor sensor = sensors[i];
+      Serial.print("Sensing " + sensor.name);
+      String value = sensor.sense();
+      Serial.println(" value is " + value);
       Result result = {
         sensor.name,
         sensor.unit,
-        sensor.sense()
+        value
       };
 
       results[i] = result;
@@ -161,14 +179,15 @@ public:
     http.addHeader("Authorization", "Bearer " + String(token));
     http.addHeader("Content-Type", "application/json");
 
+    // POST sense data and return responded actions
     int httpCode = http.POST(buildJsonPayload(results));
-    vector<Result> actions;
-
+    Serial.println(httpCode);
     if (httpCode == HTTP_CODE_OK) {
       String payload = http.getString();
       StaticJsonDocument<200> doc;
       deserializeJson(doc, payload);
       size_t controlCount = doc.size();
+      actions.resize(controlCount);
 
       for (size_t i = 0; i < controlCount; i++) {
         JsonObject control = doc[i];
@@ -180,27 +199,28 @@ public:
         actions[i] = action;
       }
     } else {
-      Serial.println();
-      Serial.print("Bad response (" + String(httpCode) + ") in sense for Shinode id: " + String(device_id));
+      Serial.println("Bad response (" + String(httpCode) + ") in sense for Shinode id: " + String(device_id));
     }
-
+          
     http.end();
     return actions;
   }
 
-  void control(vector<Result>& actions) {
+  void control(vector<Result> actions) {
     size_t actionCount = actions.size();
     vector<Result> results(actionCount);
 
     for (size_t i = 0; i < actionCount; i++) {
-      Result& action = actions[i];
-      Controller controller = findControllerByName(action.name);
-      Result result = {
-        controller.name,
-        controller.unit,
-        controller.control(action)
-      };
-      results[i] = result;
+      Result action = actions[i];
+      Controller* controller = findControllerByName(action.name);
+      if (controller) {
+        Result result = {
+          controller->name,
+          controller->unit,
+          controller->control(action)
+        };
+        results[i] = result;
+      }
     }
 
     HTTPClient http;
@@ -218,37 +238,40 @@ public:
   }
 
   void sync() {
+    Serial.println("sync called");
     if (polling_interval != 0 && millis() - last_poll > polling_interval) {
+      Serial.println("passed sync condition");
       vector<Result> actions = sense();
       control(actions);
     }
   }
 
 private:
-  Sensor findSensorByName(String name) {
+  Sensor* findSensorByName(String name) {
     for (size_t i = 0; i < sensors.size(); i++) {
-      Sensor& sensor = sensors[i];
-
-      if (sensor.name == name) {
+      Sensor* sensor = &sensors[i];
+      if (sensor->name == name) {
+        Serial.println(name);
         return sensor;
       }
     }
 
     Serial.println();
     Serial.print("Sensor config not found: " + name);
+    return nullptr;
   }
 
-  Controller findControllerByName(String name) {
+  Controller* findControllerByName(String name) {
     for (size_t i = 0; i < controllers.size(); i++) {
-      Controller& controller = controllers[i];
-
-      if (controller.name == name) {
+      Controller* controller = &controllers[i];
+      if (controller->name == name) {
         return controller;
       }
     }
 
     Serial.println();
     Serial.print("Controller config not found: " + name);
+    return nullptr;
   }
 
   String buildJsonPayload(vector<Result> results) {
