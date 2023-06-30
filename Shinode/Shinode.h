@@ -248,6 +248,7 @@ public:
     if (polling_interval != 0 && millis() - last_poll > polling_interval) {
       Serial.println("passed sync condition");
       vector<Result> actions = sense();
+      last_poll = millis();
       control(actions);
     }
   }
@@ -290,6 +291,7 @@ private:
       doc[i]["name"] = result.name;
       doc[i]["unit"] = result.unit;
       doc[i]["value"] = result.value;
+      //Serial.println(result.name);
     }
 
     String json;
