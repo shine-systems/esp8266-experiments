@@ -179,12 +179,14 @@ public:
     http.addHeader("Authorization", "Bearer " + String(token));
     http.addHeader("Content-Type", "application/json");
 
-    // POST sense data and return responded actions
+    Serial.println("Connected in sense...");
+
+    // POST sense data and set responded actions
     int httpCode = http.POST(buildJsonPayload(results));
     Serial.println(httpCode);
     if (httpCode == HTTP_CODE_OK) {
       String payload = http.getString();
-      StaticJsonDocument<200> doc;
+      DynamicJsonDocument doc(1024);
       deserializeJson(doc, payload);
       size_t controlCount = doc.size();
       actions.resize(controlCount);
@@ -275,19 +277,21 @@ private:
   }
 
   String buildJsonPayload(vector<Result> results) {
-    size_t capacity = JSON_ARRAY_SIZE(results.size()) + results.size() * JSON_OBJECT_SIZE(3);
-    DynamicJsonDocument doc(capacity);
-    JsonObject obj = doc.to<JsonObject>();
+    //size_t capacity = JSON_ARRAY_SIZE(results.size()) + results.size() * JSON_OBJECT_SIZE(3);
+    DynamicJsonDocument doc(1024);
+    Serial.println(results.size());
 
     for (size_t i = 0; i < results.size(); i++) {
       Result result = results[i];
-      obj["name"] = result.name;
-      obj["unit"] = result.unit;
-      obj["value"] = result.value;
+      doc[i]["name"] = result.name;
+      doc[i]["unit"] = result.unit;
+      doc[i]["value"] = result.value;
     }
 
     String json;
     serializeJson(doc, json);
+
+    Serial.println(json);
 
     return json;
   }
