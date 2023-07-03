@@ -44,8 +44,9 @@ private:
   const char* APPSK;
   const char* host;
   const char* rootCACert;
-  unsigned long last_poll;
-  unsigned int polling_interval;
+  bool connected;
+  int last_poll;
+  int polling_interval;
   WiFiClientSecure client;
   HTTPClient http;
   vector<Sensor> sensors;
@@ -68,14 +69,17 @@ public:
       APPSK(APPSK),
       host(host),
       rootCACert(rootCACert),
-      last_poll(millis()),
+      connected(false),
+      last_poll(0),
       polling_interval(0),
       sensors(sensors),
       controllers(controllers) {}
 
-  void connect() {
+  void setup() {
+    Serial.println("setup called...");
+
     // WIFI SETUP
-    Serial.print("connecting to ");
+    Serial.print("Connecting to ");
     Serial.println(APSSID);
     WiFi.mode(WIFI_STA);
     WiFi.begin(APSSID, APPSK);
@@ -84,8 +88,7 @@ public:
       Serial.print(".");
     }
     Serial.println("");
-    Serial.print("WiFi connected");
-    Serial.println("IP address: ");
+    Serial.print("WiFi connected. IP address: ");
     Serial.println(WiFi.localIP());
 
     // Synchronize time useing SNTP. This is necessary to verify that
@@ -103,22 +106,28 @@ public:
     gmtime_r(&now, &timeinfo);
     Serial.print("Current time: ");
     Serial.print(asctime(&timeinfo));
-      
-    X509List cert(rootCACert);
-    client.setTrustAnchors(&cert);
+  }
+
+  void connect() {
+    Serial.println("connect called...");
 
     Serial.println("Connecting to host: " + String(host));
-    http.begin(client, host, 443, "/" + String(device_id) + "/connect", true);
+    X509List cert(rootCACert);
+    client.setTrustAnchors(&cert);
+    http.begin(client, host, 443, "/connect/" + String(device_id), true);
     http.addHeader("Authorization", "Bearer " + String(token));
 
     int httpCode = http.GET();
     if (httpCode == HTTP_CODE_OK) {
       Serial.println("Connection success.");
       String payload = http.getString();
+      Serial.println(payload);
       DynamicJsonDocument doc(1024);
       deserializeJson(doc, payload);
 
+      connected = true;
       polling_interval = doc["polling_interval"];
+      last_poll = doc["last_poll"];
 
       // setup sensors
       size_t sensorCount = sensors.size();
@@ -154,7 +163,8 @@ public:
   }
 
   vector<Result> sense() {
-    Serial.println("sense called");
+    Serial.println("sense called...");
+
     size_t sensorCount = sensors.size();
     vector<Result> results(sensorCount);
     vector<Result> actions(0);
@@ -174,19 +184,19 @@ public:
       results[i] = result;
     }
 
-    http.begin(client, host, 443, "/" + String(device_id) + "/sense", true);
+    http.begin(client, host, 443, "/sense/" + String(device_id), true);
     http.addHeader("Authorization", "Bearer " + String(token));
     http.addHeader("Content-Type", "application/json");
 
     // POST sense data and set responded actions
     int httpCode = http.POST(buildJsonPayload(results));
-    Serial.println(httpCode);
     if (httpCode == HTTP_CODE_OK) {
       String payload = http.getString();
       Serial.println("Actions from server:");
       Serial.println(payload);
       DynamicJsonDocument doc(1024);
       deserializeJson(doc, payload);
+
       size_t controlCount = doc.size();
       actions.resize(controlCount);
 
@@ -200,6 +210,7 @@ public:
         actions[i] = action;
       }
     } else {
+      connected = false;
       Serial.println("Bad response (" + String(httpCode) + ") in sense for Shinode id: " + String(device_id));
     }
           
@@ -208,7 +219,8 @@ public:
   }
 
   void control(vector<Result> actions) {
-    Serial.println("control called");
+    Serial.println("control called...");
+
     size_t actionCount = actions.size();
     if (actions[0].name == "null") {
       Serial.println("No actions given to control.");
@@ -220,7 +232,7 @@ public:
     for (size_t i = 0; i < actionCount; i++) {
       Result action = actions[i];
       Controller* controller = findControllerByName(action.name);
-      if (controller) {
+      if (controller != nullptr) {
         Result result = {
           controller->name,
           controller->unit,
@@ -230,25 +242,29 @@ public:
       }
     }
 
-    http.begin(client, host, 443, "/" + String(device_id) + "/control", true);
+    http.begin(client, host, 443, "/control/" + String(device_id), true);
     http.addHeader("Authorization", "Bearer " + String(token));
     http.addHeader("Content-Type", "application/json");
 
     int httpCode = http.POST(buildJsonPayload(results));
     if (httpCode != HTTP_CODE_OK) {
-      Serial.println();
-      Serial.print("Bad response (" + String(httpCode) + ") in control for Shinode id: " + String(device_id));
+      connected = false;
+      Serial.println("Bad response (" + String(httpCode) + ") in control for Shinode id: " + String(device_id));
     }
 
     http.end();
   }
 
   void sync() {
-    Serial.println("sync called");
-    if (polling_interval != 0 && millis() - last_poll > polling_interval) {
-      Serial.println("passed sync condition");
+    Serial.println("sync called...");
+
+    if (!connected) {
+      connect();
+    }
+
+    if (polling_interval && last_poll && time(nullptr) - last_poll >= polling_interval) {
       vector<Result> actions = sense();
-      last_poll = millis();
+      last_poll = time(nullptr);
       control(actions);
     }
   }
@@ -276,22 +292,20 @@ private:
       }
     }
 
-    Serial.println();
-    Serial.print("Controller config not found: " + name);
+    Serial.println("Controller config not found: " + name);
     return nullptr;
   }
 
   String buildJsonPayload(vector<Result> results) {
-    size_t capacity = JSON_ARRAY_SIZE(results.size()) + results.size() * JSON_OBJECT_SIZE(3);
-    DynamicJsonDocument doc(capacity);
-    Serial.println(results.size());
+    DynamicJsonDocument doc(1024);
 
     for (size_t i = 0; i < results.size(); i++) {
       Result result = results[i];
-      doc[i]["name"] = result.name;
-      doc[i]["unit"] = result.unit;
-      doc[i]["value"] = result.value;
-      //Serial.println(result.name);
+      DynamicJsonDocument inner_doc(512);
+      inner_doc["name"] = result.name;
+      inner_doc["unit"] = result.unit;
+      inner_doc["value"] = result.value;
+      doc.add(inner_doc);
     }
 
     String json;

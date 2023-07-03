@@ -79,7 +79,7 @@ void setup() {
   Serial.setDebugOutput(true);
   Serial.println();
   
-  device.connect();
+  device.setup();
 }
 
 void loop() {
