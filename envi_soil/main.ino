@@ -9,8 +9,8 @@ Sensor moisture_sensor = {
   [=]() { pinMode(SOIL_MOISTURE, OUTPUT); },
   [=]() {
     float value = analogRead(SOIL_MOISTURE);
-    int max = 700;
-    int min = 200;
+    int max = 290;
+    int min = 720;
     float calibrated = ((value - min) / (max - min)) * 100;
     return String(calibrated);
   }
@@ -28,9 +28,6 @@ Sensor temperature_sensor = {
         delay(10);
       }
     }
-
-    aht_temp = aht.getTemperatureSensor();
-    aht_temp->printSensorDetails();
   },
   [&]() {
     sensors_event_t temp;
@@ -51,9 +48,6 @@ Sensor humidity_sensor = {
         delay(10);
       }
     }
-
-    aht_humidity = aht.getHumiditySensor();
-    aht_humidity->printSensorDetails();
   },
   [=]() {
     sensors_event_t humidity;
@@ -84,5 +78,5 @@ void setup() {
 
 void loop() {
   device.sync();
-  delay(5000);
+  delay(1000);
 }

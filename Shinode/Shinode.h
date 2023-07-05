@@ -106,6 +106,22 @@ public:
     gmtime_r(&now, &timeinfo);
     Serial.print("Current time: ");
     Serial.print(asctime(&timeinfo));
+
+    // setup sensors
+    size_t sensorCount = sensors.size();
+    for (size_t i = 0; i < sensorCount; i++) {
+      Sensor sensor = sensors[i];
+      Serial.println("Setting up " + sensor.name);
+      sensor.setup();
+    }
+
+    // setup controllers
+    size_t controllerCount = controllers.size();
+    for (size_t i = 0; i < controllerCount; i++) {
+      Controller controller = controllers[i];
+      Serial.println("Setting up " + controller.name);
+      controller.setup();
+    }
   }
 
   void connect() {
@@ -128,14 +144,6 @@ public:
       connected = true;
       polling_interval = doc["polling_interval"];
       last_poll = doc["last_poll"];
-
-      // setup sensors
-      size_t sensorCount = sensors.size();
-      for (size_t i = 0; i < sensorCount; i++) {
-        Sensor sensor = sensors[i];
-        Serial.println("Setting up " + sensor.name);
-        sensor.setup();
-      }
 
       // Check if received sensor data matches Shinode config
       JsonArray receivedSensors = doc["sensors"];
@@ -164,17 +172,13 @@ public:
 
   vector<Result> sense() {
     Serial.println("sense called...");
-
     size_t sensorCount = sensors.size();
     vector<Result> results(sensorCount);
     vector<Result> actions(0);
-    Serial.println("Number of sensors registered locally: " + String(sensorCount));
 
     for (size_t i = 0; i < sensorCount; i++) {
       Sensor sensor = sensors[i];
-      Serial.print("Sensing " + sensor.name);
       String value = sensor.sense();
-      Serial.println(" value is " + value);
       Result result = {
         sensor.name,
         sensor.unit,
@@ -222,7 +226,7 @@ public:
     Serial.println("control called...");
 
     size_t actionCount = actions.size();
-    if (actions[0].name == "null") {
+    if (actionCount < 1 || !actions[0].name) {
       Serial.println("No actions given to control.");
       return;
     }
@@ -231,6 +235,8 @@ public:
 
     for (size_t i = 0; i < actionCount; i++) {
       Result action = actions[i];
+      Serial.println("with action: ");
+      Serial.println(action.name);
       Controller* controller = findControllerByName(action.name);
       if (controller != nullptr) {
         Result result = {
@@ -274,7 +280,7 @@ private:
     for (size_t i = 0; i < sensors.size(); i++) {
       Sensor* sensor = &sensors[i];
       if (sensor->name == name) {
-        Serial.println(name);
+        Serial.print("Sensor config found: " + name);
         return sensor;
       }
     }
@@ -288,6 +294,7 @@ private:
     for (size_t i = 0; i < controllers.size(); i++) {
       Controller* controller = &controllers[i];
       if (controller->name == name) {
+        Serial.println("Controller config found: " + name);
         return controller;
       }
     }
@@ -299,12 +306,20 @@ private:
   String buildJsonPayload(vector<Result> results) {
     DynamicJsonDocument doc(1024);
 
-    for (size_t i = 0; i < results.size(); i++) {
-      Result result = results[i];
+    if (results.size()) {
+      for (size_t i = 0; i < results.size(); i++) {
+        Result result = results[i];
+        DynamicJsonDocument inner_doc(512);
+        inner_doc["name"] = result.name;
+        inner_doc["unit"] = result.unit;
+        inner_doc["value"] = result.value;
+        doc.add(inner_doc);
+      }
+    } else {
       DynamicJsonDocument inner_doc(512);
-      inner_doc["name"] = result.name;
-      inner_doc["unit"] = result.unit;
-      inner_doc["value"] = result.value;
+      inner_doc["name"] = "";
+      inner_doc["unit"] = "";
+      inner_doc["value"] = "";
       doc.add(inner_doc);
     }
 
